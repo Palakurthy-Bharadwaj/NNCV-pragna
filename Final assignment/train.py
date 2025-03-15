@@ -55,6 +55,7 @@ def convert_train_id_to_color(prediction: torch.Tensor) -> torch.Tensor:
 
     return color_image
 
+# In train.py
 class DiceLoss(nn.Module):
     def __init__(self, num_classes=19):
         super(DiceLoss, self).__init__()
@@ -62,7 +63,11 @@ class DiceLoss(nn.Module):
     
     def forward(self, pred, target):
         pred = pred.softmax(1)
-        target_onehot = torch.zeros_like(pred).scatter_(1, target.unsqueeze(1), 1)
+        mask = target != 255
+        target_masked = target.clone()
+        target_masked[~mask] = 0
+        target_onehot = torch.zeros_like(pred).scatter_(1, target_masked.unsqueeze(1), 1)
+        target_onehot[~mask] = 0
         intersection = (pred * target_onehot).sum(dim=(2, 3))
         union = pred.sum(dim=(2, 3)) + target_onehot.sum(dim=(2, 3))
         dice = (2 * intersection + 1e-6) / (union + 1e-6)
