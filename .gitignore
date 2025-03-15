@@ -172,3 +172,7 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+Final assignment/test_eval.py
+Final assignment/test_pets.py
+Final assignment/unet_cityscapes_subset.pth
+Final assignment/unet_pets.pth

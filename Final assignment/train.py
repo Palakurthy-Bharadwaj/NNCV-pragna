@@ -28,6 +28,7 @@ from torchvision.transforms.v2 import (
     Resize,
     ToImage,
     ToDtype,
+    InterpolationMode,
 )
 
 from unet import UNet
@@ -65,6 +66,8 @@ def get_args_parser():
     parser.add_argument("--num-workers", type=int, default=10, help="Number of workers for data loaders")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
     parser.add_argument("--experiment-id", type=str, default="unet-training", help="Experiment ID for Weights & Biases")
+    parser.add_argument("--image-height", type=int, default=256, help="Height for resizing images")
+    parser.add_argument("--image-width", type=int, default=512, help="Width for resizing images")
 
     return parser
 
@@ -91,27 +94,36 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Define the transforms to apply to the data
-    transform = Compose([
+    image_transform = Compose([
         ToImage(),
-        Resize((256, 256)),
+        Resize((args.image_height, args.image_width)),
         ToDtype(torch.float32, scale=True),
-        Normalize((0.5,), (0.5,)),
+        Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+    ])
+    
+    target_transform = Compose([
+        ToImage(),
+        Resize((args.image_height, args.image_width), interpolation=InterpolationMode.NEAREST),
+        ToDtype(torch.long, scale=False),
     ])
 
+    def transform_function(image, target):
+        return image_transform(image), target_transform(target)
+                                                        
     # Load the dataset and make a split for training and validation
     train_dataset = Cityscapes(
         args.data_dir, 
         split="train", 
         mode="fine", 
         target_type="semantic", 
-        transforms=transform
+        transforms=transform_function
     )
     valid_dataset = Cityscapes(
         args.data_dir, 
         split="val", 
         mode="fine", 
         target_type="semantic", 
-        transforms=transform
+        transforms=transform_function
     )
 
     train_dataset = wrap_dataset_for_transforms_v2(train_dataset)
@@ -208,7 +220,9 @@ def main(args):
             wandb.log({
                 "valid_loss": valid_loss
             }, step=(epoch + 1) * len(train_dataloader) - 1)
-
+            
+            print(f"Validation Loss: {valid_loss:.4f}")
+            
             if valid_loss < best_valid_loss:
                 best_valid_loss = valid_loss
                 if current_best_model_path:
@@ -218,6 +232,7 @@ def main(args):
                     f"best_model-epoch={epoch:04}-val_loss={valid_loss:04}.pth"
                 )
                 torch.save(model.state_dict(), current_best_model_path)
+                print(f"New best model saved with validation loss: {valid_loss:.4f}")
         
     print("Training complete!")
 
