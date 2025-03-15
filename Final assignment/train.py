@@ -62,11 +62,13 @@ class DiceLoss(nn.Module):
         self.num_classes = num_classes
     
     def forward(self, pred, target):
-        pred = pred.softmax(1)
-        mask = target != 255
+        pred = pred.softmax(1)  # [B, 19, H, W]
+        mask = (target != 255)  # [B, H, W]
         target_masked = target.clone()
         target_masked[~mask] = 0
         target_onehot = torch.zeros_like(pred).scatter_(1, target_masked.unsqueeze(1), 1)
+        # Fix mask shape: [B, H, W] -> [B, 1, H, W] -> [B, 19, H, W]
+        mask = mask.unsqueeze(1).expand_as(pred)  # Broadcast across channels
         target_onehot[~mask] = 0
         intersection = (pred * target_onehot).sum(dim=(2, 3))
         union = pred.sum(dim=(2, 3)) + target_onehot.sum(dim=(2, 3))
