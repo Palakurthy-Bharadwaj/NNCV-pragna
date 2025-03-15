@@ -57,7 +57,7 @@ def convert_train_id_to_color(prediction: torch.Tensor) -> torch.Tensor:
 
 # In train.py
 class DiceLoss(nn.Module):
-    def __init__(self, num_classes=19):
+    def __init__(self, num_classes=34):
         super(DiceLoss, self).__init__()
         self.num_classes = num_classes
     
@@ -164,7 +164,7 @@ def main(args):
     # Define the model
     model = UNet(
         in_channels=3,  # RGB images
-        n_classes=19,  # 19 classes in the Cityscapes dataset
+        n_classes=34,  # 19 classes in the Cityscapes dataset
     ).to(device)
 
     # Define the loss functions

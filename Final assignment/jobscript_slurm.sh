@@ -4,6 +4,6 @@
 #SBATCH --cpus-per-task=18
 #SBATCH --gpus=1
 #SBATCH --partition=gpu_a100
-#SBATCH --time=00:30:00
+#SBATCH --time=03:30:00
 
 srun apptainer exec --nv --env-file .env container.sif /bin/bash main.sh

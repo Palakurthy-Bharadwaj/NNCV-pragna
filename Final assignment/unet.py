@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class UNet(nn.Module):
-    def __init__(self, in_channels=3, n_classes=19):
+    def __init__(self, in_channels=3, n_classes=34):
         super(UNet, self).__init__()
         self.inc = DoubleConv(in_channels, 96)
         self.down1 = Down(96, 192)
