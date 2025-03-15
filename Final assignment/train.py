@@ -55,6 +55,18 @@ def convert_train_id_to_color(prediction: torch.Tensor) -> torch.Tensor:
 
     return color_image
 
+class DiceLoss(nn.Module):
+    def __init__(self, num_classes=19):
+        super(DiceLoss, self).__init__()
+        self.num_classes = num_classes
+    
+    def forward(self, pred, target):
+        pred = pred.softmax(1)
+        target_onehot = torch.zeros_like(pred).scatter_(1, target.unsqueeze(1), 1)
+        intersection = (pred * target_onehot).sum(dim=(2, 3))
+        union = pred.sum(dim=(2, 3)) + target_onehot.sum(dim=(2, 3))
+        dice = (2 * intersection + 1e-6) / (union + 1e-6)
+        return 1 - dice.mean()
 
 def get_args_parser():
 
@@ -148,8 +160,9 @@ def main(args):
         n_classes=19,  # 19 classes in the Cityscapes dataset
     ).to(device)
 
-    # Define the loss function
-    criterion = nn.CrossEntropyLoss(ignore_index=255)  # Ignore the void class
+    # Define the loss functions
+    criterion_ce = nn.CrossEntropyLoss(ignore_index=255)
+    criterion_dice = DiceLoss()
 
     # Define the optimizer
     optimizer = AdamW(model.parameters(), lr=args.lr)
@@ -171,7 +184,7 @@ def main(args):
 
             optimizer.zero_grad()
             outputs = model(images)
-            loss = criterion(outputs, labels)
+            loss = 0.5 * criterion_ce(outputs, labels) + 0.5 * criterion_dice(outputs, labels)
             loss.backward()
             optimizer.step()
 
@@ -193,7 +206,7 @@ def main(args):
                 labels = labels.long().squeeze(1)  # Remove channel dimension
 
                 outputs = model(images)
-                loss = criterion(outputs, labels)
+                loss = 0.5 * criterion_ce(outputs, labels) + 0.5 * criterion_dice(outputs, labels)
                 losses.append(loss.item())
             
                 if i == 0:
