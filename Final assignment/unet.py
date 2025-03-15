@@ -4,18 +4,18 @@ import torch.nn as nn
 class UNet(nn.Module):
     def __init__(self, in_channels=3, n_classes=19):
         super(UNet, self).__init__()
-        self.inc = DoubleConv(in_channels, 128)    # 64 → 128
-        self.down1 = Down(128, 256)                # 128 → 256
-        self.down2 = Down(256, 512)                # 256 → 512
-        self.down3 = Down(512, 1024)               # 512 → 1024
-        self.down4 = Down(1024, 1536)              # 1024 → 1536
-        self.aspp = ASPP(1536, 1536)               # Beefy bottleneck
-        self.up1 = Up(1536, 1024, 512)             # 1024, 512 → 512
-        self.up2 = Up(512, 512, 256)               # 512, 256 → 256
-        self.up3 = Up(256, 256, 128)               # 256, 128 → 128
-        self.up4 = Up(128, 128, 128)               # 128, 64 → 128
-        self.outc = OutConv(128, n_classes)
-
+        self.inc = DoubleConv(in_channels, 96)
+        self.down1 = Down(96, 192)
+        self.down2 = Down(192, 384)
+        self.down3 = Down(384, 768)
+        self.down4 = Down(768, 1280)
+        self.aspp = ASPP(1280, 1280)
+        self.up1 = Up(1280, 768, 384)
+        self.up2 = Up(384, 384, 192)
+        self.up3 = Up(192, 192, 96)
+        self.up4 = Up(96, 96, 96)
+        self.outc = OutConv(96, n_classes)
+    
     def forward(self, x):
         x1 = self.inc(x)
         x2 = self.down1(x1)
