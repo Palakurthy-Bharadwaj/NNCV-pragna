@@ -4,17 +4,17 @@ import torch.nn as nn
 class UNet(nn.Module):
     def __init__(self, in_channels=3, n_classes=19):
         super(UNet, self).__init__()
-        self.inc = DoubleConv(in_channels, 64)    # 96 → 64
-        self.down1 = Down(64, 128)                # 192 → 128
-        self.down2 = Down(128, 256)               # 384 → 256
-        self.down3 = Down(256, 512)               # 768 → 512
-        self.down4 = Down(512, 1024)              # 1536 → 1024
-        self.aspp = ASPP(1024, 1024)
-        self.up1 = Up(1024, 512, 256)             # 1536, 768 → 256
-        self.up2 = Up(256, 256, 128)              # 384, 384 → 128
-        self.up3 = Up(128, 128, 64)               # 192, 192 → 64
-        self.up4 = Up(64, 64, 64)                 # 96, 96 → 64
-        self.outc = OutConv(64, n_classes)
+        self.inc = DoubleConv(in_channels, 128)    # 64 → 128
+        self.down1 = Down(128, 256)                # 128 → 256
+        self.down2 = Down(256, 512)                # 256 → 512
+        self.down3 = Down(512, 1024)               # 512 → 1024
+        self.down4 = Down(1024, 1536)              # 1024 → 1536
+        self.aspp = ASPP(1536, 1536)               # Beefy bottleneck
+        self.up1 = Up(1536, 1024, 512)             # 1024, 512 → 512
+        self.up2 = Up(512, 512, 256)               # 512, 256 → 256
+        self.up3 = Up(256, 256, 128)               # 256, 128 → 128
+        self.up4 = Up(128, 128, 128)               # 128, 64 → 128
+        self.outc = OutConv(128, n_classes)
 
     def forward(self, x):
         x1 = self.inc(x)
@@ -39,7 +39,7 @@ class DoubleConv(nn.Module):
             nn.Conv2d(in_channels, mid_channels, kernel_size=3, padding=dilation, dilation=dilation, bias=False),
             nn.BatchNorm2d(mid_channels),
             nn.ReLU(inplace=True),
-            nn.Dropout2d(0.1),
+            nn.Dropout2d(0.1),  # Keep dropout for regularization
             nn.Conv2d(mid_channels, out_channels, kernel_size=3, padding=dilation, dilation=dilation, bias=False),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True),
