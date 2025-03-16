@@ -33,11 +33,17 @@ from torchvision.transforms.v2 import (
 
 from unet import UNet
 
+print( "Cityscapes classes : ",Cityscapes.classes)
 
-# Mapping class IDs to train IDs
 id_to_trainid = {cls.id: cls.train_id for cls in Cityscapes.classes}
+
+max_id = max(id_to_trainid.keys()) + 1
+lookup = torch.full((max_id,), 255, dtype=torch.long)
+for cls_id, train_id in id_to_trainid.items():
+    lookup[cls_id] = train_id
+
 def convert_to_train_id(label_img: torch.Tensor) -> torch.Tensor:
-    return label_img.apply_(lambda x: id_to_trainid[x])
+    return lookup[label_img] 
 
 # Mapping train IDs to color
 train_id_to_color = {cls.train_id: cls.color for cls in Cityscapes.classes if cls.train_id != 255}
@@ -178,6 +184,8 @@ def main(args):
             images, labels = images.to(device), labels.to(device)
             labels = labels.squeeze(1)  # Remove channel dimension, already mapped
 
+            print(f"Labels dtype: {labels.dtype}")  # Should print torch.int64
+            
             optimizer.zero_grad()
             outputs = model(images)
             loss = 0.5 * criterion_ce(outputs, labels) + 0.5 * criterion_dice(outputs, labels)
