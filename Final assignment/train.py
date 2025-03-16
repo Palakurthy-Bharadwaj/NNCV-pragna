@@ -38,12 +38,19 @@ print( "Cityscapes classes : ",Cityscapes.classes)
 id_to_trainid = {cls.id: cls.train_id for cls in Cityscapes.classes}
 
 max_id = max(id_to_trainid.keys()) + 1
-lookup = torch.full((max_id,), 255, dtype=torch.long)
+lookup = torch.full((max_id,), 255, dtype=torch.long)  # 1D tensor
 for cls_id, train_id in id_to_trainid.items():
     lookup[cls_id] = train_id
 
 def convert_to_train_id(label_img: torch.Tensor) -> torch.Tensor:
-    return lookup[label_img] 
+    # Ensure label_img is a tensor with the expected type and shape
+    if label_img.dim() == 3 and label_img.shape[0] == 1:  # [1, H, W] -> [H, W]
+        label_img = label_img.squeeze(0)
+    elif label_img.dim() != 2:  # Unexpected shape
+        raise ValueError(f"Expected label_img to be 2D or 3D with one channel, got shape {label_img.shape}")
+    
+    # Index the lookup tensor with label_img, preserving spatial dimensions
+    return lookup[label_img]  # Output shape will be [H, W]
 
 # Mapping train IDs to color
 train_id_to_color = {cls.train_id: cls.color for cls in Cityscapes.classes if cls.train_id != 255}
