@@ -46,18 +46,15 @@ train_id_to_color[255] = (0, 0, 0)  # Assign black to ignored labels
 def convert_train_id_to_color(prediction: torch.Tensor) -> torch.Tensor:
     batch, _, height, width = prediction.shape
     color_image = torch.zeros((batch, 3, height, width), dtype=torch.uint8)
-
     for train_id, color in train_id_to_color.items():
         mask = prediction[:, 0] == train_id
-
         for i in range(3):
             color_image[:, i][mask] = color[i]
-
     return color_image
 
-# In train.py
+# Dice Loss updated for 19 classes
 class DiceLoss(nn.Module):
-    def __init__(self, num_classes=34):
+    def __init__(self, num_classes=19):  # Changed from 34 to 19
         super(DiceLoss, self).__init__()
         self.num_classes = num_classes
     
@@ -67,8 +64,7 @@ class DiceLoss(nn.Module):
         target_masked = target.clone()
         target_masked[~mask] = 0
         target_onehot = torch.zeros_like(pred).scatter_(1, target_masked.unsqueeze(1), 1)
-        # Fix mask shape: [B, H, W] -> [B, 1, H, W] -> [B, 19, H, W]
-        mask = mask.unsqueeze(1).expand_as(pred)  # Broadcast across channels
+        mask = mask.unsqueeze(1).expand_as(pred)  # [B, 19, H, W]
         target_onehot[~mask] = 0
         intersection = (pred * target_onehot).sum(dim=(2, 3))
         union = pred.sum(dim=(2, 3)) + target_onehot.sum(dim=(2, 3))
@@ -76,7 +72,6 @@ class DiceLoss(nn.Module):
         return 1 - dice.mean()
 
 def get_args_parser():
-
     parser = ArgumentParser("Training script for a PyTorch U-Net model")
     parser.add_argument("--data-dir", type=str, default="./data/cityscapes", help="Path to the training data")
     parser.add_argument("--batch-size", type=int, default=64, help="Training batch size")
@@ -87,32 +82,28 @@ def get_args_parser():
     parser.add_argument("--experiment-id", type=str, default="unet-training", help="Experiment ID for Weights & Biases")
     parser.add_argument("--image-height", type=int, default=256, help="Height for resizing images")
     parser.add_argument("--image-width", type=int, default=512, help="Width for resizing images")
-
     return parser
-
 
 def main(args):
     # Initialize wandb for logging
     wandb.init(
-        project="5lsm0-cityscapes-segmentation",  # Project name in wandb
-        name=args.experiment_id,  # Experiment name in wandb
-        config=vars(args),  # Save hyperparameters
+        project="5lsm0-cityscapes-segmentation",
+        name=args.experiment_id,
+        config=vars(args),
     )
 
-    # Create output directory if it doesn't exist
+    # Create output directory
     output_dir = os.path.join("checkpoints", args.experiment_id)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Set seed for reproducability
-    # If you add other sources of randomness (NumPy, Random), 
-    # make sure to set their seeds as well
+    # Set seed for reproducibility
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = True
 
     # Define the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Define the transforms to apply to the data
+    # Define transforms with mapping integrated
     image_transform = Compose([
         ToImage(),
         Resize((args.image_height, args.image_width)),
@@ -124,12 +115,13 @@ def main(args):
         ToImage(),
         Resize((args.image_height, args.image_width), interpolation=InterpolationMode.NEAREST),
         ToDtype(torch.long, scale=False),
+        lambda x: convert_to_train_id(x),  # Apply mapping here
     ])
 
     def transform_function(image, target):
         return image_transform(image), target_transform(target)
-                                                        
-    # Load the dataset and make a split for training and validation
+
+    # Load datasets
     train_dataset = Cityscapes(
         args.data_dir, 
         split="train", 
@@ -161,17 +153,17 @@ def main(args):
         num_workers=args.num_workers
     )
 
-    # Define the model
+    # Define the model with 19 classes
     model = UNet(
         in_channels=3,  # RGB images
-        n_classes=34,  # 19 classes in the Cityscapes dataset
+        n_classes=19,  # 19 classes in Cityscapes
     ).to(device)
 
-    # Define the loss functions
+    # Define loss functions
     criterion_ce = nn.CrossEntropyLoss(ignore_index=255)
-    criterion_dice = DiceLoss()
+    criterion_dice = DiceLoss(num_classes=19)  # Explicitly set to 19
 
-    # Define the optimizer
+    # Define optimizer
     optimizer = AdamW(model.parameters(), lr=args.lr)
 
     # Training loop
@@ -183,11 +175,8 @@ def main(args):
         # Training
         model.train()
         for i, (images, labels) in enumerate(train_dataloader):
-
-            labels = convert_to_train_id(labels)  # Convert class IDs to train IDs
             images, labels = images.to(device), labels.to(device)
-
-            labels = labels.long().squeeze(1)  # Remove channel dimension
+            labels = labels.squeeze(1)  # Remove channel dimension, already mapped
 
             optimizer.zero_grad()
             outputs = model(images)
@@ -206,11 +195,8 @@ def main(args):
         with torch.no_grad():
             losses = []
             for i, (images, labels) in enumerate(valid_dataloader):
-
-                labels = convert_to_train_id(labels)  # Convert class IDs to train IDs
                 images, labels = images.to(device), labels.to(device)
-
-                labels = labels.long().squeeze(1)  # Remove channel dimension
+                labels = labels.squeeze(1)  # Remove channel dimension, already mapped
 
                 outputs = model(images)
                 loss = 0.5 * criterion_ce(outputs, labels) + 0.5 * criterion_dice(outputs, labels)
@@ -218,7 +204,6 @@ def main(args):
             
                 if i == 0:
                     predictions = outputs.softmax(1).argmax(1)
-
                     predictions = predictions.unsqueeze(1)
                     labels = labels.unsqueeze(1)
 
@@ -256,7 +241,7 @@ def main(args):
         
     print("Training complete!")
 
-    # Save the model
+    # Save final model
     torch.save(
         model.state_dict(),
         os.path.join(
@@ -265,7 +250,6 @@ def main(args):
         )
     )
     wandb.finish()
-
 
 if __name__ == "__main__":
     parser = get_args_parser()
