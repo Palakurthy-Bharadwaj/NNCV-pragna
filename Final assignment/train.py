@@ -239,6 +239,7 @@ def main(args):
             
             # Calculate average values
             valid_loss = sum(losses) / len(losses)
+            print("All Dices", all_dices)
             valid_dice = sum(all_dices) / len(all_dices)
             
             # Log metrics
