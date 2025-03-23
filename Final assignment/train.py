@@ -186,7 +186,10 @@ def main(args):
 
     # Training loop
     best_valid_loss = float('inf')
-    current_best_model_path = None
+    best_valid_dice = 0  # Start from 0
+
+    best_loss_model_path = None
+    best_dice_model_path = None
     for epoch in range(args.epochs):
         print(f"Epoch {epoch+1:04}/{args.epochs:04}")
 
@@ -271,10 +274,21 @@ def main(args):
                     os.remove(current_best_model_path)
                 current_best_model_path = os.path.join(
                     output_dir, 
-                    f"best_model-epoch={epoch:04}-val_loss={valid_loss:.4f}.pth"
+                    f"GREAT_model-epoch={epoch:04}-val_loss={valid_loss:.4f}.pth"
                 )
                 torch.save(model.state_dict(), current_best_model_path)
                 print(f"New best model saved with validation loss: {valid_loss:.4f}")
+            
+            if valid_dice > best_valid_dice:
+                best_valid_dice = valid_dice
+                if best_dice_model_path:
+                    os.remove(best_dice_model_path)
+                best_dice_model_path = os.path.join(
+                    output_dir, 
+                    f"GREAT_dice_model-epoch={epoch:04}-dice={valid_dice:.4f}.pth"
+                )
+                torch.save(model.state_dict(), best_dice_model_path)
+                print(f"New best Dice model saved with Dice: {valid_dice:.4f}")
 
         print("Training complete!")
 
@@ -282,7 +296,7 @@ def main(args):
         model.state_dict(),
         os.path.join(
             output_dir,
-            f"final_model-epoch={epoch:04}-val_loss={valid_loss:04}.pth"
+            f"final_GREAT_model-epoch={epoch:04}-val_loss={valid_loss:04}.pth"
         )
     )
     wandb.finish()
