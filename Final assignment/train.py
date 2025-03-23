@@ -177,6 +177,7 @@ def main(args):
                     os.remove(current_best_model_path)
                 current_best_model_path = os.path.join(output_dir, f"best_model-epoch={epoch:04}-val_loss={valid_loss:04}.pth")
                 torch.save(model.state_dict(), current_best_model_path)
+        print(f"Validation Loss: {valid_loss:.4f}")
     
     print("Training complete!")
     torch.save(model.state_dict(), os.path.join(output_dir, f"final_model-epoch={epoch:04}-val_loss={valid_loss:04}.pth"))
