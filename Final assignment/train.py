@@ -137,13 +137,12 @@ def main(args):
                 outputs = model(images)
                 ce_loss = criterion(outputs, labels)
                 # Add this before dice_loss call
-                print(f"Target min: {labels.min().item()}, max: {labels.max().item()}, shape: {labels.shape}")
-                print(f"Output shape: {outputs.shape}")
                 dice = dice_loss(outputs, labels)
                 loss = 0.5 * ce_loss + 0.5 * dice
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
+            print(f"Batch {i+1:04}/{len(train_dataloader):04} Loss: {loss.item():.4f}")
             wandb.log({"train_loss": loss.item(), "learning_rate": optimizer.param_groups[0]['lr'], "epoch": epoch + 1}, step=epoch * len(train_dataloader) + i)
         
         model.eval()
