@@ -12,8 +12,6 @@ from torchvision.transforms.v2 import (
     RandomHorizontalFlip, ColorJitter,
 )
 from unet import UNet
-from torch.amp import GradScaler, autocast
-
 
 
 # Mapping class IDs to train IDs
@@ -38,147 +36,182 @@ def convert_train_id_to_color(prediction: torch.Tensor) -> torch.Tensor:
     return color_image
 
 
-def dice_loss(pred, target, smooth=1, ignore_index=255):
-    # Create a mask for valid pixels (not ignore_index)
-    mask = (target != ignore_index)
-    
-    pred = pred.softmax(dim=1)
-    
-    # Only use valid indices for one-hot encoding
-    target_masked = target.clone()
-    target_masked[~mask] = 0  # Replace ignore_index with 0 temporarily
-    
-    # Create one-hot encoding
-    target_one_hot = torch.zeros_like(pred)
-    target_one_hot.scatter_(1, target_masked.unsqueeze(1), 1)
-    
-    # Zero out the background class where we had ignore pixels
-    ignore_mask = (~mask).unsqueeze(1)
-    target_one_hot[:, 0][ignore_mask.squeeze(1)] = 0
-    
-    # Calculate intersection and union only on valid pixels
-    intersection = (pred * target_one_hot).sum(dim=(2, 3))
-    union = pred.sum(dim=(2, 3)) + target_one_hot.sum(dim=(2, 3))
-    
-    # Calculate Dice score
-    dice = (2. * intersection + smooth) / (union + smooth)
-    
-    # Average across classes and batch
-    return 1 - dice.mean()
-
 def get_args_parser():
     parser = ArgumentParser("Training script for a PyTorch U-Net model")
     parser.add_argument("--data-dir", type=str, default="./data/cityscapes")
-    parser.add_argument("--batch-size", type=int, default=32)  # Reduced
-    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--lr", type=float, default=0.001)
-    parser.add_argument("--num-workers", type=int, default=10)
+    parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--experiment-id", type=str, default="unet-retrain-enhanced")
+    parser.add_argument("--experiment-id", type=str, default="unet-simple")
     return parser
 
 def main(args):
-    wandb.init(project="5lsm0-cityscapes-segmentation", name=args.experiment_id, config=vars(args))
+    # Initialize wandb for experiment tracking
+    wandb.init(project="cityscapes-segmentation", name=args.experiment_id, config=vars(args))
+
     output_dir = os.path.join("checkpoints", args.experiment_id)
     os.makedirs(output_dir, exist_ok=True)
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = True
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    # Data transformations
     train_image_transform = Compose([
-        ToImage(), Resize((256, 512)), RandomHorizontalFlip(p=0.5),
-        ColorJitter(brightness=0.2, contrast=0.2), ToDtype(torch.float32, scale=True),
-        Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        ToImage(), 
+        Resize((256, 512)), 
+        RandomHorizontalFlip(p=0.5),
+        ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2), 
+        ToDtype(torch.float32, scale=True),
+        Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),  # ImageNet stats
     ])
+    
     target_transform = Compose([
-        ToImage(), Resize((256, 512), interpolation=InterpolationMode.NEAREST),
-        RandomHorizontalFlip(p=0.5), ToDtype(torch.long, scale=False)
+        ToImage(), 
+        Resize((256, 512), interpolation=InterpolationMode.NEAREST),
+        RandomHorizontalFlip(p=0.5), 
+        ToDtype(torch.long, scale=False)
     ])
+    
     valid_image_transform = Compose([
-        ToImage(), Resize((256, 512)), ToDtype(torch.float32, scale=True),
-        Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+        ToImage(), 
+        Resize((256, 512)), 
+        ToDtype(torch.float32, scale=True),
+        Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
 
+    # Ensure synchronized random transformations for image and target
     def train_transform_function(image, target):
         seed = torch.randint(0, 100000, (1,)).item()
         torch.manual_seed(seed)
         image = train_image_transform(image)
         torch.manual_seed(seed)
         target = target_transform(target)
-        return image, target
+        return image, convert_to_train_id(target)  # Convert to train_id here
 
-    train_dataset = Cityscapes(args.data_dir, split="train", mode="fine", target_type="semantic", transforms=train_transform_function)
-    valid_dataset = Cityscapes(args.data_dir, split="val", mode="fine", target_type="semantic", transforms=lambda img, tgt: (valid_image_transform(img), target_transform(tgt)))
+    def val_transform_function(image, target):
+        image = valid_image_transform(image)
+        target = target_transform(target)
+        return image, convert_to_train_id(target)  # Convert to train_id here
+
+    # Datasets and dataloaders
+    train_dataset = Cityscapes(
+        args.data_dir, split="train", mode="fine", 
+        target_type="semantic", transforms=train_transform_function
+    )
+    valid_dataset = Cityscapes(
+        args.data_dir, split="val", mode="fine", 
+        target_type="semantic", transforms=val_transform_function
+    )
+    
     train_dataset = wrap_dataset_for_transforms_v2(train_dataset)
     valid_dataset = wrap_dataset_for_transforms_v2(valid_dataset)
 
-    train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
-    valid_dataloader = DataLoader(valid_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    train_dataloader = DataLoader(
+        train_dataset, batch_size=args.batch_size, 
+        shuffle=True, num_workers=args.num_workers, pin_memory=True
+    )
+    valid_dataloader = DataLoader(
+        valid_dataset, batch_size=args.batch_size, 
+        shuffle=False, num_workers=args.num_workers, pin_memory=True
+    )
 
+    # Model, loss, optimizer, and scheduler
     model = UNet(in_channels=3, n_classes=19).to(device)
+    
+    # Using just cross entropy loss with label smoothing
     criterion = nn.CrossEntropyLoss(ignore_index=255, label_smoothing=0.1)
-    optimizer = AdamW(model.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True)
-    scaler = torch.amp.GradScaler('cuda')
+    
+    # AdamW optimizer with weight decay
+    optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    
+    # Learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.5, patience=3, verbose=True
+    )
 
+    # Training loop
     best_valid_loss = float('inf')
-    current_best_model_path = None
+    best_model_path = os.path.join(output_dir, "best_model.pth")
+    
     for epoch in range(args.epochs):
-        print(f"Epoch {epoch+1:04}/{args.epochs:04}")
+        print(f"Epoch {epoch+1}/{args.epochs}")
+        
+        # Training phase
         model.train()
+        train_loss = 0.0
+        
         for i, (images, labels) in enumerate(train_dataloader):
-            labels = convert_to_train_id(labels)
             images, labels = images.to(device), labels.to(device)
             labels = labels.long().squeeze(1)
+            
             optimizer.zero_grad()
-            with autocast('cuda'):
-                outputs = model(images)
-                ce_loss = criterion(outputs, labels)
-                # Add this before dice_loss call
-                dice = dice_loss(outputs, labels)
-                loss = 0.5 * ce_loss + 0.5 * dice
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
-            print(f"Batch {i+1:04}/{len(train_dataloader):04} Loss: {loss.item():.4f}")
-            wandb.log({"train_loss": loss.item(), "learning_rate": optimizer.param_groups[0]['lr'], "epoch": epoch + 1}, step=epoch * len(train_dataloader) + i)
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            
+            train_loss += loss.item()
+            
+            if (i + 1) % 10 == 0:
+                print(f"  Batch {i+1}/{len(train_dataloader)} Loss: {loss.item():.4f}")
+            
+            wandb.log({
+                "train_loss": loss.item(), 
+                "learning_rate": optimizer.param_groups[0]['lr'], 
+                "epoch": epoch + 1
+            })
         
+        avg_train_loss = train_loss / len(train_dataloader)
+        print(f"  Training Loss: {avg_train_loss:.4f}")
+        
+        # Validation phase
         model.eval()
+        valid_loss = 0.0
+        
         with torch.no_grad():
-            losses = []
             for i, (images, labels) in enumerate(valid_dataloader):
-                labels = convert_to_train_id(labels)
                 images, labels = images.to(device), labels.to(device)
                 labels = labels.long().squeeze(1)
-                with autocast('cuda'):
-                    outputs = model(images)
-                    loss = criterion(outputs, labels)
-                losses.append(loss.item())
+                
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+                valid_loss += loss.item()
+                
+                # Log sample predictions
                 if i == 0:
-                    predictions = outputs.softmax(1).argmax(1)
-                    predictions = predictions.unsqueeze(1)
-                    labels = labels.unsqueeze(1)
-                    predictions = convert_train_id_to_color(predictions)
-                    labels = convert_train_id_to_color(labels)
-                    predictions_img = make_grid(predictions.cpu(), nrow=8)
-                    labels_img = make_grid(labels.cpu(), nrow=8)
-                    predictions_img = predictions_img.permute(1, 2, 0).numpy()
-                    labels_img = labels_img.permute(1, 2, 0).numpy()
-                    wandb.log({"predictions": [wandb.Image(predictions_img)], "labels": [wandb.Image(labels_img)]}, step=(epoch + 1) * len(train_dataloader) - 1)
+                    predictions = outputs.argmax(1, keepdim=True)
+                    colored_predictions = convert_train_id_to_color(predictions)
+                    colored_labels = convert_train_id_to_color(labels.unsqueeze(1))
+                    
+                    predictions_img = make_grid(colored_predictions.cpu(), nrow=4)
+                    labels_img = make_grid(colored_labels.cpu(), nrow=4)
+                    
+                    wandb.log({
+                        "predictions": wandb.Image(predictions_img.permute(1, 2, 0).numpy()),
+                        "ground_truth": wandb.Image(labels_img.permute(1, 2, 0).numpy()),
+                    })
             
-            valid_loss = sum(losses) / len(losses)
-            wandb.log({"valid_loss": valid_loss}, step=(epoch + 1) * len(train_dataloader) - 1)
-            scheduler.step(valid_loss)
-            if valid_loss < best_valid_loss:
-                best_valid_loss = valid_loss
-                if current_best_model_path:
-                    os.remove(current_best_model_path)
-                current_best_model_path = os.path.join(output_dir, f"best_model-epoch={epoch:04}-val_loss={valid_loss:04}.pth")
-                torch.save(model.state_dict(), current_best_model_path)
-        print(f"Validation Loss: {valid_loss:.4f}")
+            avg_valid_loss = valid_loss / len(valid_dataloader)
+            print(f"  Validation Loss: {avg_valid_loss:.4f}")
+            
+            wandb.log({"valid_loss": avg_valid_loss, "epoch": epoch + 1})
+            
+            # Update learning rate
+            scheduler.step(avg_valid_loss)
+            
+            # Save best model
+            if avg_valid_loss < best_valid_loss:
+                best_valid_loss = avg_valid_loss
+                torch.save(model.state_dict(), best_model_path)
+                print(f"  Saved new best model with validation loss: {best_valid_loss:.4f}")
     
-    print("Training complete!")
-    torch.save(model.state_dict(), os.path.join(output_dir, f"final_model-epoch={epoch:04}-val_loss={valid_loss:04}.pth"))
+    # Save final model
+    final_model_path = os.path.join(output_dir, f"final_model_e{args.epochs}_loss{avg_valid_loss:.4f}.pth")
+    torch.save(model.state_dict(), final_model_path)
+    print(f"Training complete! Final model saved to {final_model_path}")
+    
     wandb.finish()
 
 if __name__ == "__main__":
