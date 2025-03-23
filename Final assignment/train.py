@@ -1,4 +1,4 @@
-import os
+import os, math
 from argparse import ArgumentParser
 import wandb
 import torch
@@ -18,6 +18,52 @@ from torchvision.transforms.v2 import (
 
 from unet import UNet
 
+def calculate_dice(pred, target, n_classes=19, ignore_index=255, smooth=1e-5):
+    """
+    Calculate mean Dice coefficient for semantic segmentation.
+    
+    Args:
+        pred (torch.Tensor): Prediction tensor of shape [B, C, H, W] or [B, H, W]
+        target (torch.Tensor): Target tensor of shape [B, H, W]
+        n_classes (int): Number of classes
+        ignore_index (int): Index to ignore in the calculation
+        smooth (float): Small constant to avoid division by zero
+        
+    Returns:
+        float: Mean Dice coefficient across all classes (excluding ignored classes)
+        list: Dice coefficient for each class
+    """
+    if pred.dim() == 4:  # [B, C, H, W] -> [B, H, W]
+        pred = pred.argmax(dim=1)
+    
+    dice_scores = []
+    
+    # Process each class
+    for cls in range(n_classes):
+        # Create binary masks
+        pred_mask = (pred == cls).float()
+        target_mask = (target == cls).float()
+        
+        # Mask out ignore index
+        valid_mask = (target != ignore_index).float()
+        pred_mask = pred_mask * valid_mask
+        target_mask = target_mask * valid_mask
+        
+        # Calculate Dice
+        intersection = (pred_mask * target_mask).sum()
+        total = pred_mask.sum() + target_mask.sum()
+        
+        if total < 1e-8:  # If the class is not present in this batch
+            dice_scores.append(float('nan'))
+        else:
+            dice = (2 * intersection + smooth) / (total + smooth)
+            dice_scores.append(dice.item())
+    
+    # Calculate mean Dice (ignoring NaN values)
+    valid_dices = [dice for dice in dice_scores if not math.isnan(dice)]
+    mean_dice = sum(valid_dices) / len(valid_dices) if valid_dices else 0
+    
+    return mean_dice, dice_scores
 
 # Mapping class IDs to train IDs
 id_to_trainid = {cls.id: cls.train_id for cls in Cityscapes.classes}
@@ -165,48 +211,43 @@ def main(args):
                 "learning_rate": optimizer.param_groups[0]['lr'],
                 "epoch": epoch + 1,
             }, step=epoch * len(train_dataloader) + i)
-            
-        # Validation
+
+        # Inside your validation loop after calculating the loss
         model.eval()
         with torch.no_grad():
             losses = []
+            all_dices = []
             for i, (images, labels) in enumerate(valid_dataloader):
-
-                labels = convert_to_train_id(labels)  # Convert class IDs to train IDs
+                # Convert class IDs to train IDs
+                labels = convert_to_train_id(labels)
                 images, labels = images.to(device), labels.to(device)
-
                 labels = labels.long().squeeze(1)  # Remove channel dimension
-
+                
+                # Forward pass
                 outputs = model(images)
                 loss = criterion(outputs, labels)
                 losses.append(loss.item())
+                
+                # Get predictions
+                predictions = outputs.argmax(dim=1)  # [B, C, H, W] -> [B, H, W]
+                
+                # Calculate Dice for this batch
+                batch_dice, class_dices = calculate_dice(predictions, labels)
+                all_dices.append(batch_dice)
+                
+                # Rest of your validation code...
             
-                if i == 0:
-                    predictions = outputs.softmax(1).argmax(1)
-
-                    predictions = predictions.unsqueeze(1)
-                    labels = labels.unsqueeze(1)
-
-                    predictions = convert_train_id_to_color(predictions)
-                    labels = convert_train_id_to_color(labels)
-
-                    predictions_img = make_grid(predictions.cpu(), nrow=8)
-                    labels_img = make_grid(labels.cpu(), nrow=8)
-
-                    predictions_img = predictions_img.permute(1, 2, 0).numpy()
-                    labels_img = labels_img.permute(1, 2, 0).numpy()
-
-                    wandb.log({
-                        "predictions": [wandb.Image(predictions_img)],
-                        "labels": [wandb.Image(labels_img)],
-                    }, step=(epoch + 1) * len(train_dataloader) - 1)
-            
+            # Calculate average values
             valid_loss = sum(losses) / len(losses)
+            valid_dice = sum(all_dices) / len(all_dices)
+            
+            # Log metrics
             wandb.log({
-                "valid_loss": valid_loss
+                "valid_loss": valid_loss,
+                "valid_dice": valid_dice
             }, step=(epoch + 1) * len(train_dataloader) - 1)
             
-            print(f"Validation Loss: {valid_loss:.4f}")
+            print(f"Validation Loss: {valid_loss:.4f}, Dice: {valid_dice:.4f}")
             
             if valid_loss < best_valid_loss:
                 best_valid_loss = valid_loss
