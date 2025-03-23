@@ -40,12 +40,33 @@ def convert_train_id_to_color(prediction: torch.Tensor) -> torch.Tensor:
     return color_image
 
 
-def dice_loss(pred, target, smooth=1):
+def dice_loss(pred, target, smooth=1, ignore_index=255):
+    # Create a mask for valid pixels (not ignore_index)
+    mask = (target != ignore_index)
+    
     pred = pred.softmax(dim=1)
-    target_one_hot = torch.zeros_like(pred).scatter_(1, target.unsqueeze(1), 1)
+    
+    # Only use valid indices for one-hot encoding
+    target_masked = target.clone()
+    target_masked[~mask] = 0  # Replace ignore_index with 0 temporarily
+    
+    # Create one-hot encoding
+    target_one_hot = torch.zeros_like(pred)
+    target_one_hot.scatter_(1, target_masked.unsqueeze(1), 1)
+    
+    # Zero out the background class where we had ignore pixels
+    ignore_mask = (~mask).unsqueeze(1)
+    target_one_hot[:, 0][ignore_mask.squeeze(1)] = 0
+    
+    # Calculate intersection and union only on valid pixels
     intersection = (pred * target_one_hot).sum(dim=(2, 3))
     union = pred.sum(dim=(2, 3)) + target_one_hot.sum(dim=(2, 3))
-    return 1 - ((2. * intersection + smooth) / (union + smooth)).mean()
+    
+    # Calculate Dice score
+    dice = (2. * intersection + smooth) / (union + smooth)
+    
+    # Average across classes and batch
+    return 1 - dice.mean()
 
 def get_args_parser():
     parser = ArgumentParser("Training script for a PyTorch U-Net model")
