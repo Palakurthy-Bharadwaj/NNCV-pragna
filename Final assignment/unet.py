@@ -5,17 +5,17 @@ class UNet(nn.Module):
     """Enhanced U-Net for cityscape segmentation with ASPP and improved upsampling."""
     def __init__(self, in_channels=3, n_classes=19):
         super(UNet, self).__init__()
-        self.inc = DoubleConv(in_channels, 96)
-        self.down1 = Down(96, 192)
-        self.down2 = Down(192, 384)
-        self.down3 = Down(384, 768)
-        self.down4 = Down(768, 1536)
-        self.aspp = ASPP(1536, 1536)  # Multi-scale context in bottleneck
-        self.up1 = Up(1536, 768, 384)  # Explicitly pass prev_channels (1536), skip_channels (768), out_channels (384)
-        self.up2 = Up(384, 384, 192)
-        self.up3 = Up(192, 192, 96)
-        self.up4 = Up(96, 96, 96)
-        self.outc = OutConv(96, n_classes)
+        self.inc = DoubleConv(in_channels, 64)          
+        self.down1 = Down(64, 128) 
+        self.down2 = Down(128, 256)
+        self.down3 = Down(256, 512) 
+        self.down4 = Down(512, 1024)
+        self.aspp = ASPP(1024, 1024)
+        self.up1 = Up(1024, 512, 256)
+        self.up2 = Up(256, 256, 128) 
+        self.up3 = Up(128, 128, 64)
+        self.up4 = Up(64, 64, 64)                      
+        self.outc = OutConv(64, n_classes)              
 
     def forward(self, x):
         x1 = self.inc(x)
@@ -23,11 +23,11 @@ class UNet(nn.Module):
         x3 = self.down2(x2)
         x4 = self.down3(x3)
         x5 = self.down4(x4)
-        x5 = self.aspp(x5)  # x5 has 1536 channels
-        x = self.up1(x5, x4)  # x4 has 768 channels
-        x = self.up2(x, x3)   # x3 has 384 channels
-        x = self.up3(x, x2)   # x2 has 192 channels
-        x = self.up4(x, x1)   # x1 has 96 channels
+        x5 = self.aspp(x5)
+        x = self.up1(x5, x4)
+        x = self.up2(x, x3)
+        x = self.up3(x, x2)
+        x = self.up4(x, x1)
         logits = self.outc(x)
         return logits
 
