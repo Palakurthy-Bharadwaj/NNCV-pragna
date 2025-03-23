@@ -21,7 +21,7 @@ def convert_to_train_id(label_img: torch.Tensor) -> torch.Tensor:
 
 # Mapping train IDs to color
 train_id_to_color = {cls.train_id: cls.color for cls in Cityscapes.classes if cls.train_id != 255}
-train_id_to_color[255] = (0, 0, 0)  # Assign black to ignored labels
+train_id_to_color[255] = (0, 0, 0)  
 
 def convert_train_id_to_color(prediction: torch.Tensor) -> torch.Tensor:
     batch, _, height, width = prediction.shape
