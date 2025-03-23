@@ -10,7 +10,7 @@ class UNet(nn.Module):
         self.down2 = Down(128, 256)
         self.down3 = Down(256, 512) 
         self.down4 = Down(512, 1024)
-        self.aspp = ASPP(1024, 1024)
+        self.aspp = ASPP(1024, 1024, use_global=True)
         self.up1 = Up(1024, 512, 256)
         self.up2 = Up(256, 256, 128) 
         self.up3 = Up(128, 128, 64)
