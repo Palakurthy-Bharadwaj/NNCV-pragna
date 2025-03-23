@@ -11,8 +11,8 @@ from torchvision.transforms.v2 import (
     Compose, Normalize, Resize, ToImage, ToDtype, InterpolationMode,
     RandomHorizontalFlip, ColorJitter,
 )
-from unet import UNet
-
+# from unet import UNet
+from enhanced_unet import EnhancedUNet
 
 # Mapping class IDs to train IDs
 id_to_trainid = {cls.id: cls.train_id for cls in Cityscapes.classes}
@@ -118,7 +118,7 @@ def main(args):
     )
 
     # Model, loss, optimizer, and scheduler
-    model = UNet(in_channels=3, n_classes=19).to(device)
+    model = EnhancedUNet(in_channels=3, n_classes=19).to(device)
     
     # Using just cross entropy loss with label smoothing
     criterion = nn.CrossEntropyLoss(ignore_index=255, label_smoothing=0.1)
