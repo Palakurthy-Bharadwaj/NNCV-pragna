@@ -1,4 +1,4 @@
-import os, math
+import os
 from argparse import ArgumentParser
 import wandb
 import torch
@@ -15,7 +15,7 @@ from torchvision.transforms.v2 import (
     ToDtype,
     InterpolationMode,
 )
-
+import math
 from unet import UNet
 
 def calculate_dice(pred, target, n_classes=19, ignore_index=255, smooth=1e-5):
@@ -63,6 +63,8 @@ def calculate_dice(pred, target, n_classes=19, ignore_index=255, smooth=1e-5):
     valid_dices = [dice for dice in dice_scores if not math.isnan(dice)]
     mean_dice = sum(valid_dices) / len(valid_dices) if valid_dices else 0
     
+    print("dice_scores :", dice_scores)
+    print("mean_dice :", mean_dice)
     return mean_dice, dice_scores
 
 # Mapping class IDs to train IDs
@@ -115,9 +117,6 @@ def main(args):
     output_dir = os.path.join("checkpoints", args.experiment_id)
     os.makedirs(output_dir, exist_ok=True)
 
-    # Set seed for reproducability
-    # If you add other sources of randomness (NumPy, Random), 
-    # make sure to set their seeds as well
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = True
 
@@ -211,44 +210,48 @@ def main(args):
                 "learning_rate": optimizer.param_groups[0]['lr'],
                 "epoch": epoch + 1,
             }, step=epoch * len(train_dataloader) + i)
-
-        # Inside your validation loop after calculating the loss
+            
+        # Validation
         model.eval()
         with torch.no_grad():
             losses = []
-            all_dices = []
             for i, (images, labels) in enumerate(valid_dataloader):
-                # Convert class IDs to train IDs
-                labels = convert_to_train_id(labels)
+
+                labels = convert_to_train_id(labels)  # Convert class IDs to train IDs
                 images, labels = images.to(device), labels.to(device)
+
                 labels = labels.long().squeeze(1)  # Remove channel dimension
-                
-                # Forward pass
+
                 outputs = model(images)
                 loss = criterion(outputs, labels)
                 losses.append(loss.item())
-                
-                # Get predictions
-                predictions = outputs.argmax(dim=1)  # [B, C, H, W] -> [B, H, W]
-                
-                # Calculate Dice for this batch
-                batch_dice, class_dices = calculate_dice(predictions, labels)
-                all_dices.append(batch_dice)
-                
-                # Rest of your validation code...
             
-            # Calculate average values
+                if i == 0:
+                    predictions = outputs.softmax(1).argmax(1)
+
+                    predictions = predictions.unsqueeze(1)
+                    labels = labels.unsqueeze(1)
+
+                    predictions = convert_train_id_to_color(predictions)
+                    labels = convert_train_id_to_color(labels)
+
+                    predictions_img = make_grid(predictions.cpu(), nrow=8)
+                    labels_img = make_grid(labels.cpu(), nrow=8)
+
+                    predictions_img = predictions_img.permute(1, 2, 0).numpy()
+                    labels_img = labels_img.permute(1, 2, 0).numpy()
+
+                    wandb.log({
+                        "predictions": [wandb.Image(predictions_img)],
+                        "labels": [wandb.Image(labels_img)],
+                    }, step=(epoch + 1) * len(train_dataloader) - 1)
+            
             valid_loss = sum(losses) / len(losses)
-            print("All Dices", all_dices)
-            valid_dice = sum(all_dices) / len(all_dices)
-            
-            # Log metrics
             wandb.log({
-                "valid_loss": valid_loss,
-                "valid_dice": valid_dice
+                "valid_loss": valid_loss
             }, step=(epoch + 1) * len(train_dataloader) - 1)
             
-            print(f"Validation Loss: {valid_loss:.4f}, Dice: {valid_dice:.4f}")
+            print(f"Validation Loss: {valid_loss:.4f}")
             
             if valid_loss < best_valid_loss:
                 best_valid_loss = valid_loss
