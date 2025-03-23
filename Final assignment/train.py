@@ -14,7 +14,7 @@ from torchvision.transforms.v2 import (
     RandomHorizontalFlip, ColorJitter,
 )
 from unet import UNet
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 
 
 
@@ -100,7 +100,7 @@ def main(args):
     criterion = nn.CrossEntropyLoss(ignore_index=255, label_smoothing=0.1)
     optimizer = AdamW(model.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True)
-    scaler = GradScaler()
+    scaler = torch.amp.GradScaler('cuda')
 
     best_valid_loss = float('inf')
     current_best_model_path = None
@@ -112,7 +112,7 @@ def main(args):
             images, labels = images.to(device), labels.to(device)
             labels = labels.long().squeeze(1)
             optimizer.zero_grad()
-            with autocast():
+            with autocast('cuda'):
                 outputs = model(images)
                 ce_loss = criterion(outputs, labels)
                 dice = dice_loss(outputs, labels)
