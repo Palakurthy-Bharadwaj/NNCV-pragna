@@ -115,6 +115,9 @@ def main(args):
             with autocast('cuda'):
                 outputs = model(images)
                 ce_loss = criterion(outputs, labels)
+                # Add this before dice_loss call
+                print(f"Target min: {labels.min().item()}, max: {labels.max().item()}, shape: {labels.shape}")
+                print(f"Output shape: {outputs.shape}")
                 dice = dice_loss(outputs, labels)
                 loss = 0.5 * ce_loss + 0.5 * dice
             scaler.scale(loss).backward()
