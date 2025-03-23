@@ -215,6 +215,7 @@ def main(args):
         model.eval()
         with torch.no_grad():
             losses = []
+            all_dices = []
             for i, (images, labels) in enumerate(valid_dataloader):
 
                 labels = convert_to_train_id(labels)  # Convert class IDs to train IDs
@@ -225,6 +226,12 @@ def main(args):
                 outputs = model(images)
                 loss = criterion(outputs, labels)
                 losses.append(loss.item())
+
+                predictions = outputs.softmax(1).argmax(1)  # Get class predictions
+
+                # Calculate Dice for this batch
+                batch_dice, class_dices = calculate_dice(predictions, labels)
+                all_dices.append(batch_dice)
             
                 if i == 0:
                     predictions = outputs.softmax(1).argmax(1)
@@ -247,26 +254,30 @@ def main(args):
                     }, step=(epoch + 1) * len(train_dataloader) - 1)
             
             valid_loss = sum(losses) / len(losses)
+            valid_dice = sum(all_dices) / len(all_dices)
+
+            # Log metrics
             wandb.log({
-                "valid_loss": valid_loss
+                "valid_loss": valid_loss,
+                "valid_dice": valid_dice
             }, step=(epoch + 1) * len(train_dataloader) - 1)
-            
-            print(f"Validation Loss: {valid_loss:.4f}")
-            
+
+            print(f"Validation Loss: {valid_loss:.4f}, Dice: {valid_dice:.4f}")
+
+            # Save the best model
             if valid_loss < best_valid_loss:
                 best_valid_loss = valid_loss
                 if current_best_model_path:
                     os.remove(current_best_model_path)
                 current_best_model_path = os.path.join(
                     output_dir, 
-                    f"best_model-epoch={epoch:04}-val_loss={valid_loss:04}.pth"
+                    f"best_model-epoch={epoch:04}-val_loss={valid_loss:.4f}.pth"
                 )
                 torch.save(model.state_dict(), current_best_model_path)
                 print(f"New best model saved with validation loss: {valid_loss:.4f}")
-        
-    print("Training complete!")
 
-    # Save the model
+        print("Training complete!")
+
     torch.save(
         model.state_dict(),
         os.path.join(
