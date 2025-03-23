@@ -153,7 +153,7 @@ def main(args):
                 labels = convert_to_train_id(labels)
                 images, labels = images.to(device), labels.to(device)
                 labels = labels.long().squeeze(1)
-                with autocast():
+                with autocast('cuda'):
                     outputs = model(images)
                     loss = criterion(outputs, labels)
                 losses.append(loss.item())
