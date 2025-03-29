@@ -4,13 +4,16 @@ import wandb
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from torchvision.datasets import Cityscapes, wrap_dataset_for_transforms_v2
 from torchvision.utils import make_grid
 from torchvision.transforms.v2 import (
-    Compose, Normalize, Resize, ToImage, ToDtype, InterpolationMode,
-    RandomHorizontalFlip, RandomRotation, ColorJitter, RandomResizedCrop
+    Compose,
+    Normalize,
+    Resize,
+    ToImage,
+    ToDtype,
+    InterpolationMode,
 )
 import math
 from unet import UNet
@@ -90,14 +93,14 @@ def get_args_parser():
 
     parser = ArgumentParser("Training script for a PyTorch U-Net model")
     parser.add_argument("--data-dir", type=str, default="./data/cityscapes", help="Path to the training data")
-    parser.add_argument("--batch-size", type=int, default=8, help="Training batch size")
-    parser.add_argument("--epochs", type=int, default=100, help="Number of training epochs")
+    parser.add_argument("--batch-size", type=int, default=64, help="Training batch size")
+    parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=0.001, help="Learning rate")
     parser.add_argument("--num-workers", type=int, default=10, help="Number of workers for data loaders")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
-    parser.add_argument("--experiment-id", type=str, default="unet-training-v3", help="Experiment ID for Weights & Biases")
-    parser.add_argument("--image-height", type=int, default=512, help="Height for resizing images")
-    parser.add_argument("--image-width", type=int, default=1024, help="Width for resizing images")
+    parser.add_argument("--experiment-id", type=str, default="unet-training", help="Experiment ID for Weights & Biases")
+    parser.add_argument("--image-height", type=int, default=256, help="Height for resizing images")
+    parser.add_argument("--image-width", type=int, default=512, help="Width for resizing images")
 
     return parser
 
@@ -123,19 +126,14 @@ def main(args):
     # Define the transforms to apply to the data
     image_transform = Compose([
         ToImage(),
-        RandomResizedCrop((args.image_height, args.image_width), scale=(0.8, 1.0)),
-        RandomHorizontalFlip(p=0.5),
-        RandomRotation(10),
-        ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2),
+        Resize((args.image_height, args.image_width)),
         ToDtype(torch.float32, scale=True),
-        Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),  # ImageNet stats
+        Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
     
     target_transform = Compose([
         ToImage(),
-        RandomResizedCrop((args.image_height, args.image_width), interpolation=InterpolationMode.NEAREST),
-        RandomHorizontalFlip(p=0.5),
-        RandomRotation(10, interpolation=InterpolationMode.NEAREST),
+        Resize((args.image_height, args.image_width), interpolation=InterpolationMode.NEAREST),
         ToDtype(torch.long, scale=False),
     ])
 
@@ -186,11 +184,9 @@ def main(args):
     # Define the optimizer
     optimizer = AdamW(model.parameters(), lr=args.lr)
 
-    scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=10, verbose=True)  # Maximize Dice
-
     # Training loop
     best_valid_loss = float('inf')
-    best_valid_dice = 0 
+    best_valid_dice = 0  # Start from 0
 
     best_loss_model_path = None
     best_dice_model_path = None
@@ -270,8 +266,6 @@ def main(args):
             }, step=(epoch + 1) * len(train_dataloader) - 1)
 
             print(f"Validation Loss: {valid_loss:.4f}, Dice: {valid_dice:.4f}")
-
-            scheduler.step(valid_dice)
 
             # Save the best model
             if valid_loss < best_valid_loss:
